@@ -5,6 +5,6 @@ require('./index.js')({
 }).then(function (r) {
 	process.stdout.write(JSON.stringify(r));
 }, function (e) {
-	console.log('usage: node cli.js <weixinChanId> <page>');
-	console.log(e.stack);
+	process.stderr.write('usage: node cli.js <weixinChanId> <page>');
+	process.stderr.write(e.stack);
 });
