@@ -7,10 +7,13 @@ var xml2js = require('xml2js');
 var denodeify = require('promise').denodeify;
 xml2js.parseString = denodeify(xml2js.parseString);
 
-module.exports = co.wrap(function *(weixinChanId) {
+module.exports = co.wrap(function *(opt) {
+	if (opt.weixinChanId == null)
+		throw new Error('weixinChanId must set');
+
 	var res = yield request({
 		method: 'GET',
-		uri: 'http://weixin.sogou.com/gzh?openid=' + weixinChanId,
+		uri: 'http://weixin.sogou.com/gzh?openid='+opt.weixinChanId,
 		resolveWithFullResponse: true,
 	});
 	var cookie = res.headers['set-cookie'].map(function (c) {
@@ -29,24 +32,25 @@ module.exports = co.wrap(function *(weixinChanId) {
 	vm.runInContext(scripts[1].children[0].data, sandbox);
 
 	var url = 'http://weixin.sogou.com/gzhjs?' + [
-		'cb=cb&openid='+weixinChanId,
+		'cb=cb&openid='+opt.weixinChanId,
 		sandbox.aes,
-		'page=1',
+		'page='+opt.page,
 		't='+Date.now(),
 	].join('&');
 
 	var jsonp = yield request(url);
 	return yield new Promise(function (fulfill, reject) {
 		sandbox = {cb: co.wrap(function *(r) {
-			var res = yield r.items.map(function (xml) {
+			r.items = yield r.items.map(function (xml) {
 				return xml2js.parseString(xml);
 			});
-			fulfill(res.map(function (r) {
+			r.items = r.items.map(function (r) {
 				r = r.DOCUMENT.item[0].display[0];
 				for (var k in r)
 					r[k] = r[k][0];
 				return r;
-			}));
+			});
+			fulfill(r);
 		})};
 		vm.createContext(sandbox);
 		vm.runInContext(jsonp, sandbox);
