@@ -1,21 +1,17 @@
 
 var co = require('co');
-var request = require('request-promise');
+var request = require('./request');
 var cheerio = require('cheerio');
 var vm = require('vm');
 var xml2js = require('xml2js');
-var denodeify = require('promise').denodeify;
+var denodeify = require('denodeify');
 xml2js.parseString = denodeify(xml2js.parseString);
 
 module.exports = co.wrap(function *(opt) {
 	if (opt.weixinChanId == null)
 		throw new Error('weixinChanId must set');
 
-	var res = yield request({
-		method: 'GET',
-		uri: 'http://weixin.sogou.com/gzh?openid='+opt.weixinChanId,
-		resolveWithFullResponse: true,
-	});
+	var res = yield request('http://weixin.sogou.com/gzh?openid='+opt.weixinChanId);
 	var cookie = res.headers['set-cookie'].map(function (c) {
 		return c.split(';')[0];
 	}).join('; ');
@@ -38,7 +34,7 @@ module.exports = co.wrap(function *(opt) {
 		't='+Date.now(),
 	].join('&');
 
-	var jsonp = yield request(url);
+	var jsonp = (yield request(url)).body;
 	return yield new Promise(function (fulfill, reject) {
 		sandbox = {cb: co.wrap(function *(r) {
 			r.items = yield r.items.map(function (xml) {
