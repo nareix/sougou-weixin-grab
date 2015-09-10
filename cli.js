@@ -7,8 +7,10 @@ if (argv.t)
 		process.exit(1);
 	}, argv.t*1000);
 
-require('./index.js')({
-	weixinChanId: argv._[0],
+var index = require('./index.js');
+
+index.getWeixinChanContent({
+	id: argv._[0],
 	page: parseInt(argv._[1]) || 1,
 }).then(function (r) {
 	process.stdout.write(JSON.stringify(r));
