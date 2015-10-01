@@ -38,9 +38,11 @@ var grab = co.wrap(function *(keyword) {
 	var cookies = {};
 	var ckpath = path.join('cookies', Math.ceil(Math.random()*CLI_COUNT).toString());
 
-	try {
-		cookies = JSON.parse(yield fs.readFile(ckpath));
-	} catch (e) {
+	if (fs.existsSync(ckpath)) {
+		try {
+			cookies = JSON.parse(yield fs.readFile(ckpath));
+		} catch (e) {
+		}
 	}
 
 	var r = yield new Promise(function (fulfill, reject) {
