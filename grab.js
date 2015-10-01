@@ -16,6 +16,8 @@ String.prototype.startsWith = function (s) {
 function initpage(page) {
 	page.settings.loadImages = false;
 	page.settings.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36';
+	if (args.cookies)
+		page.cookies = args.cookies;
 
 	page.onResourceRequested = function (req) {
 		log('Request', req.url);

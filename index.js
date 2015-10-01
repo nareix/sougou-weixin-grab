@@ -7,7 +7,13 @@ var vm = require('vm');
 var xml2js = require('xml2js');
 var denodeify = require('denodeify');
 var request = denodeify(require('request'));
+var path = require('path');
+var fs = require('fs');
+fs.writeFile = denodeify(fs.writeFile);
+fs.readFile = denodeify(fs.readFile);
 xml2js.parseString = denodeify(xml2js.parseString);
+
+var CLI_COUNT = 30;
 
 var parseCbRes = function (res) {
 	return new Promise(function (fulfill, reject) {
@@ -28,17 +34,22 @@ var parseCbRes = function (res) {
 	});
 };
 
-var grab = function (inj) {
-	return new Promise(function (fulfill, reject) {
+var grab = co.wrap(function *(keyword) {
+	var cookies = {};
+	var ckpath = path.join('cookies', Math.ceil(Math.random()*CLI_COUNT).toString());
+
+	try {
+		cookies = JSON.parse(yield fs.readFile(ckpath));
+	} catch (e) {
+	}
+
+	var r = yield new Promise(function (fulfill, reject) {
 		var p = child_process.spawn('./phantomjs', ['grab.js']);
-
-		p.stdin.end(JSON.stringify(inj));
-
+		p.stdin.end(JSON.stringify({keyword: keyword, cookies: cookies}));
 		var outs = '';
 		p.stdout.on('data', function (s) {
 			outs += s;
 		});
-
 		p.on('close', function (code) {
 			var r = {};
 			try {
@@ -51,7 +62,12 @@ var grab = function (inj) {
 		});
 		p.on('error', reject);
 	});
-};
+
+	if (r.code == 0)
+		yield fs.writeFile(ckpath, JSON.stringify(r.res.cookies));
+
+	return r;
+});
 
 var buildopt = function (r, page) {
 	var headers = {};
@@ -75,7 +91,7 @@ var buildopt = function (r, page) {
 module.exports.getWeixinChanContent = co.wrap(function *(opts) {
 	if (opts.id == null)
 		throw new Error('id must set');
-	var r = yield grab({keyword: opts.id});
+	var r = yield grab(opts.id);
 	if (r.code != 0)
 		throw new Error('grab failed');
 	r = (yield request(buildopt(r.res, opts.page))).body;
