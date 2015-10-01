@@ -15,7 +15,7 @@ index.getWeixinChanContent({
 }).then(function (r) {
 	process.stdout.write(JSON.stringify(r));
 }, function (e) {
-	process.stderr.write('usage: node cli.js <weixinChanId> <page> -t <timeoutSeconds>\n');
+	process.stderr.write('usage: node cli.js freebuf 1 -t 10\n');
 	process.stderr.write(e.stack);
 });
 
