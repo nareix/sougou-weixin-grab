@@ -94,7 +94,8 @@ function initpage(page) {
 				});
 				page.sendEvent('click', off.left, off.top);
 				step++;
-			}
+			} else
+				phantom.exit(1);
 		} else 
 			phantom.exit(1);
 	};
