@@ -96,7 +96,8 @@ module.exports.getWeixinChanContent = co.wrap(function *(opts) {
 	var r = yield grab(opts.id);
 	if (r.code != 0)
 		throw new Error('grab failed');
-	r = (yield request(buildopt(r.res, opts.page))).body;
-	return parseCbRes(r);
+	var cookies = r.res.cookies;
+	var body = (yield request(buildopt(r.res, opts.page))).body;
+	return Object.assign(yield parseCbRes(body), {cookies: cookies});
 });
 
