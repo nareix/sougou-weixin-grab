@@ -27,8 +27,8 @@ xml2js.parseString = denodeify(xml2js.parseString);
 //   useRequest: true,
 //   returnCookies: true,
 // }).then(...);
-
 var grab = co.wrap(function *(args) {
+
 	var JSONStringify = function (o) {
 		return JSON.stringify(o, function (k, v) {
 			if (typeof(v) == 'function')
@@ -110,7 +110,7 @@ var grab = co.wrap(function *(args) {
 	});
 	
 	var cookieRoot = process.env.GRAB_COOKIE_ROOT || '/tmp/cookies';
-	var cliCount = process.env.GRAB_CLI_COUNT || 100;
+	var cliCount = +process.env.GRAB_CLI_COUNT || 100;
 	var cookiePath = path.join(cookieRoot, Math.ceil(Math.random()*cliCount).toString());
 
 	if (!fs.existsSync(cookieRoot))
@@ -134,7 +134,14 @@ var grab = co.wrap(function *(args) {
 
 module.exports.grab = grab;
 
+// searchChan({
+//   keyword: 'ssb',
+// }) => [
+// 		{ logo: 'http://img01.sogoucdn.com/app/a/100520090/oIWsFt5Apd0rD1E8qOpHAAipFpyk',
+//     title: 'ssbjme198' }
+// ]
 module.exports.searchChan = co.wrap(function *(opts) {
+
 	if (opts.keyword == null)
 		throw new Error('keyword must set');
 
@@ -155,8 +162,25 @@ module.exports.searchChan = co.wrap(function *(opts) {
 	}).get();
 });
 
+// getChanArticles({
+//   keyword: 'xxoo',
+//   page: 1,
+// }) => {
+//   totalItems: 2147,
+//   totalPages: 10,
+//   page: 1,
+//   items: [
+//     { title, 
+//       content, 
+//       date: '2015-11-3',
+//       url: '/websearch/art.jsp?sg=sn77VhdTZLpHadHTi_ho_8VQPpV6...',
+//     },
+//   ],
+// }
 module.exports.getChanArticles = co.wrap(function *(opts) {
+
 	var parseCbRes = function (res) {
+		// xml to json
 		return new Promise(function (fulfill, reject) {
 			sandbox = {cb: co.wrap(function *(r) {
 				r.items = yield r.items.map(function (xml) {
@@ -176,6 +200,14 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 	};
 
 	var buildopt = function (req, page) {
+		// change phantomjsRequest to request form
+		// {
+		//   url: http://weixin.sogou.com?cb=originalCallback,
+		//   headers: [{name,value}...]
+		// } => {
+		//   url: http://weixin.sogou.com?cb=cb,
+		//   headers: {name: value...},
+		// }
 		var headers = {};
 		req.headers.forEach(function (h) {
 			headers[h.name] = h.value;
@@ -194,10 +226,22 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 		};
 	};
 
+	var getxml = co.wrap(function *(req) {
+		if (req.empty)
+			return {
+				totalItems: 0,
+			};
+
+		var body = (yield request(buildopt(req, opts.page))).body;
+		// body is xml
+
+		return parseCbRes(body);
+	});
+
 	if (opts.keyword == null)
 		throw new Error('keyword must set');
 
-	var grabRes = yield grab({
+	var res = yield grab({
 		url: 'http://weixin.sogou.com/weixin?query='+encodeURI(opts.keyword),
 		params: {
 			keyword: opts.keyword,
@@ -216,7 +260,9 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 			} else if (p.step == 1) {
 				var off = page.evaluate(function () {
 					return $('.results .wx-rb').first().offset();
-				}) || ctx.reject();
+				});
+				if (off == null)
+					return ctx.fulfill({empty: true});
 				page.sendEvent('click', off.left, off.top);
 				p.step++;
 			} else
@@ -228,12 +274,9 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 		},
 	});
 
-	var body = (yield request(buildopt(opts.returnCookies ? grabRes.r : grabRes, opts.page))).body;
-	var parseRes = yield parseCbRes(body);
-
 	if (opts.returnCookies)
-		return Object.assign({}, parseRes, {cookies: cookies});
+		return Object.assign({}, yield getxml(res.r), {cookies: res.cookies});
 	else
-		return parseRes;
+		return yield getxml(res);
 });
 
