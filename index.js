@@ -69,7 +69,7 @@ var grab = co.wrap(function *(args) {
 
 	var callPhantom = co.wrap(function *() {
 		return new Promise(function (fulfill, reject) {
-			var p = child_process.spawn('phantomjs', ['grab.js']);
+			var p = child_process.spawn('phantomjs', [path.join(__dirname, 'grab.js')]);
 			p.stdin.end(JSONStringify(args));
 			var outs = '';
 			p.stdout.on('data', function (s) {
