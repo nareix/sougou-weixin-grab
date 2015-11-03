@@ -198,7 +198,6 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 		throw new Error('keyword must set');
 
 	var grabRes = yield grab({
-		//url: 'http://weixin.sogou.com/',
 		url: 'http://weixin.sogou.com/weixin?query='+encodeURI(opts.keyword),
 		params: {
 			keyword: opts.keyword,
@@ -217,7 +216,7 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 			} else if (p.step == 1) {
 				var off = page.evaluate(function () {
 					return $('.results .wx-rb').first().offset();
-				});
+				}) || ctx.reject();
 				page.sendEvent('click', off.left, off.top);
 				p.step++;
 			} else
