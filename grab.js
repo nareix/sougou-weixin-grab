@@ -2,6 +2,10 @@
 var page = require('webpage').create();
 var system = require('system');
 
+String.prototype.startsWith = function (s) {
+	return this.substr(0, s.length) == s;
+};
+
 log = function () {
 	var a = [];
 	for (var i = 0; i < arguments.length; i++)
@@ -9,25 +13,49 @@ log = function () {
 	system.stderr.writeLine(a.join(' '));
 };
 
-String.prototype.startsWith = function (s) {
-	return this.substr(0, s.length) == s;
+JSONParse = function (o) {
+	return JSON.parse(o, function (k, v) {
+		if (typeof(v) == 'string' && v.substr(0,6)=='#func:') {
+			return (new Function('return '+v.substr(6)))();
+		}
+		return v;
+	})
+};
+
+readStdin = function () {
+	var r = '';
+	for (;;) {
+		var s = system.stdin.read();
+		if (s.length == 0)
+			break;
+		r += s;
+	}
+	return r;
+};
+
+errToString = function (msg, trace) {
+	var msgStack = ['ERROR: ' + msg];
+	if (trace && trace.length) {
+		msgStack.push('TRACE:');
+		trace.forEach(function(t) {
+			msgStack.push(' -> ' + t.file + ': ' + t.line + (t.function ? ' (in function "' + t.function +'")' : ''));
+		});
+	}
+	return msgStack.join(' | ');
 };
 
 function initpage(page) {
 	page.settings.loadImages = false;
 	page.settings.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36';
-	if (args.cookies)
-		page.cookies = args.cookies;
+	if (ctx.cookies)
+		page.cookies = ctx.cookies;
+	if (ctx.headers)
+		page.customHeaders = ctx.headers;
 
 	page.onResourceRequested = function (req) {
 		log('Request', req.url);
-		if (req.url.startsWith('http://weixin.sogou.com/gzhjs')) {
-			system.stdout.write(JSON.stringify({
-				req: req,
-				cookies: page.cookies,
-			}));
-			phantom.exit(0);
-		}
+		if (ctx.onResourceRequested)
+			ctx.onResourceRequested(ctx, req);
 	};
 
 	page.onResourceReceived = function(res) {
@@ -48,28 +76,13 @@ function initpage(page) {
 	};
 
 	page.onError = function (msg, trace) {
-		var msgStack = ['ERROR: ' + msg];
-
-		if (trace && trace.length) {
-			msgStack.push('TRACE:');
-			trace.forEach(function(t) {
-				msgStack.push(' -> ' + t.file + ': ' + t.line + (t.function ? ' (in function "' + t.function +'")' : ''));
-			});
-		}
-
-		log('error', msgStack.join('\n'));
+		log(errToString(msg, trace));
 	};
 
 	page.onLoadStarted = function() {
 		var currentUrl = page.evaluate(function() {
 			return window.location.href;
 		});
-		//log('Current page ' + currentUrl + ' will gone...');
-		//log('Now loading a new page...');
-	};
-
-	page.onClosing = function(closingPage) {
-		//log('The page is closing! URL: ' + closingPage.url);
 	};
 
 	page.onPageCreated = function (newpage) {
@@ -78,39 +91,37 @@ function initpage(page) {
 	};
 
 	page.onLoadFinished = function (status) {
-		log('step', step, status);
-
-		if (status === "success") {
-			if (step == 0) {
-				page.evaluate(function (args) {
-					$('.query').val(args.keyword);
-					$('#public-num').click();
-					$('#searchForm').submit();
-				}, args);
-				step++;
-			} else if (step == 1) {
-				var off = page.evaluate(function () {
-					return $('.results .wx-rb').first().offset();
-				});
-				page.sendEvent('click', off.left, off.top);
-				step++;
-			} else
-				phantom.exit(1);
-		} else 
-			phantom.exit(1);
+		log('finisned', status);
+		if (status != 'success')
+			ctx.reject();
+		else if (ctx.onLoadFinished)
+			ctx.onLoadFinished(ctx, page);
 	};
 }
 
-try {
-	var line = system.stdin.readLine();
-	args = JSON.parse(line);
-	step = 0;
-	initpage(page);
-
-	var url = 'http://weixin.sogou.com';
-	page.open(url);
-} catch (e) {
-	log(e);
+phantom.onError = function (msg, trace) {
+	log(errToString(msg, trace));
 	phantom.exit(1);
-}
+};
+
+ctx = JSONParse(readStdin());
+ctx.exit = function (code, r) {
+	system.stdout.write(JSON.stringify({
+		r: r,
+		cookies: page.cookies,
+	}));
+	phantom.exit(code);
+};
+
+ctx.fulfill = function (r) {
+	ctx.exit(0, r);
+};
+
+ctx.reject = function (r) {
+	ctx.exit(1, r);
+};
+
+initpage(page);
+page.open(ctx.url);
+// http://weixin.sogou.com
 
