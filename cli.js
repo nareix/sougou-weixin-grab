@@ -9,9 +9,10 @@ if (argv.t)
 
 var index = require('./index.js');
 
-index.getWeixinChanContent({
-	id: argv._[0],
+index.getChanArticles({
+	keyword: argv._[0],
 	page: parseInt(argv._[1]) || 1,
+	returnCookies: true,
 }).then(function (r) {
 	process.stdout.write(JSON.stringify(r));
 }, function (e) {
