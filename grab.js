@@ -107,7 +107,7 @@ phantom.onError = function (msg, trace) {
 ctx = JSONParse(readStdin());
 ctx.exit = function (code, r) {
 	system.stdout.write(JSON.stringify({
-		r: r,
+		body: r,
 		cookies: page.cookies,
 	}));
 	phantom.exit(code);

@@ -7,10 +7,12 @@ var vm = require('vm');
 var xml2js = require('xml2js');
 var denodeify = require('denodeify');
 var requestRaw = require('request');
+require('request-debug')(requestRaw);
 var request = denodeify(requestRaw);
 var path = require('path');
 var fs = require('fs');
 var cheerio = require('cheerio');
+var MemoryCookieStore = require('tough-cookie').MemoryCookieStore;
 fs.writeFile = denodeify(fs.writeFile);
 fs.readFile = denodeify(fs.readFile);
 xml2js.parseString = denodeify(xml2js.parseString);
@@ -25,8 +27,8 @@ xml2js.parseString = denodeify(xml2js.parseString);
 //   },
 //   debug: true,
 //   useRequest: true,
-//   returnCookies: true,
-// }).then(...);
+//   cookies: [in phantomjsCookieFormat],
+// }).then({body, cookies});
 var grab = co.wrap(function *(args) {
 
 	var JSONStringify = function (o) {
@@ -58,8 +60,9 @@ var grab = co.wrap(function *(args) {
 			return {
 				key: c.name,
 				value: c.value,
+				path: '/',
 				domain: c.domain.substr(1),
-				expires: new Date(c.expiry*1000).toISOString(),
+				expires: new Date(c.expiry*1000),
 				hostOnly: c.hostonly || false,
 				httpOnly: c.httponly || false,
 				secure: c.secure || false,
@@ -95,41 +98,51 @@ var grab = co.wrap(function *(args) {
 	});
 
 	var callRequest = co.wrap(function *() {
-		var jar = requestRaw.jar();
+		var store = new MemoryCookieStore();
 		phantomjsCookiesToToughCookies(args.cookies).forEach(function (c) {
-			jar._jar.store.putCookie(c, function () {});
+			console.log('putCookie', c);
+			store.putCookie(c, function (err) {
+			});
 		});
-		var r = yield request({
+		var jar = requestRaw.jar(store);
+		var res = yield request({
 			url: args.url,
 			jar: jar,
 		});
 		return {
-			r: r.body,
+			body: res.body,
 			cookies: toughCookiesToPhantomjsCookies(jar._jar.serializeSync().cookies),
 		};
 	});
-	
-	var cookieRoot = process.env.GRAB_COOKIE_ROOT || '/tmp/cookies';
+
 	var cliCount = +process.env.GRAB_CLI_COUNT || 100;
+
+	var useFsCookie = args.cookies == null;
+	var cookieRoot = process.env.GRAB_COOKIE_ROOT || '/tmp/cookies';
 	var cookiePath = path.join(cookieRoot, Math.ceil(Math.random()*cliCount).toString());
 
-	if (!fs.existsSync(cookieRoot))
-		fs.mkdirSync(cookieRoot);
+	if (useFsCookie) {
+		if (!fs.existsSync(cookieRoot))
+			fs.mkdirSync(cookieRoot);
 
-	if (fs.existsSync(cookiePath)) {
-		try {
-			args.cookies = args.cookies || JSON.parse(yield fs.readFile(cookiePath));
-		} catch (e) {
+		if (fs.existsSync(cookiePath)) {
+			try {
+				args.cookies = args.cookies || JSON.parse(yield fs.readFile(cookiePath));
+			} catch (e) {
+			}
 		}
+		args.cookies = args.cookies || [];
+		console.log('useFsCookie', args.cookies);
+	} else {
+		console.log('notUsingFsCookie');
 	}
-	args.cookies = args.cookies || [];
 
-	var r = yield (args.useRequest ? callRequest() : callPhantom());
-	yield fs.writeFile(cookiePath, JSON.stringify(r.cookies));
+	var res = yield (args.useRequest ? callRequest() : callPhantom());
 
-	if (args.returnCookies)
-		return r;
-	return r.r;
+	if (useFsCookie)
+		yield fs.writeFile(cookiePath, JSON.stringify(res.cookies));
+
+	return res;
 });
 
 module.exports.grab = grab;
@@ -179,8 +192,9 @@ module.exports.searchChan = co.wrap(function *(opts) {
 // }
 module.exports.getChanArticles = co.wrap(function *(opts) {
 
-	var parseCbRes = function (res) {
-		// xml to json
+	// code=`cb({items:['xmltext', 'xmltext', ...]})`
+	// return {items:[{}, {}, ...]}
+	var execCbCodeGetResult = function (code) {
 		return new Promise(function (fulfill, reject) {
 			sandbox = {cb: co.wrap(function *(r) {
 				r.items = yield r.items.map(function (xml) {
@@ -195,19 +209,17 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 				fulfill(r);
 			})};
 			vm.createContext(sandbox);
-			vm.runInContext(res, sandbox);
+			vm.runInContext(code, sandbox);
 		});
 	};
 
-	var buildopt = function (req, page) {
-		// change phantomjsRequest to request form
-		// {
-		//   url: http://weixin.sogou.com?cb=originalCallback,
-		//   headers: [{name,value}...]
-		// } => {
-		//   url: http://weixin.sogou.com?cb=cb,
-		//   headers: {name: value...},
-		// }
+	// req={
+	//   url: http://weixin.sogou.com?cb=originalCallback,
+	//   headers: [{name,value}...]
+	// }
+	// page=1
+	// return `cb(...)`
+	var grabCbCode = co.wrap(function *(req, cookies, page) {
 		var headers = {};
 		req.headers.forEach(function (h) {
 			headers[h.name] = h.value;
@@ -220,63 +232,70 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 		delete u.search;
 		delete u.path;
 		u.query = q;
-		return {
+
+		return (yield grab({
 			url: URL.format(u),
 			headers: headers,
-		};
-	};
-
-	var getxml = co.wrap(function *(req) {
-		if (req.empty)
-			return {
-				totalItems: 0,
-			};
-
-		var body = (yield request(buildopt(req, opts.page))).body;
-		// body is xml
-
-		return parseCbRes(body);
+			cookies: cookies,
+		})).body;
 	});
+
+	// keyword='freebuf'
+	// return {body: {phantom request for cbcode}, cookies}
+	var grabCbPhantomReq = function (opts) {
+		return grab({
+			url: 'http://weixin.sogou.com/weixin?query='+encodeURI(opts.keyword),
+			debug: true,
+			params: {
+				keyword: opts.keyword,
+				step: 1,
+			},
+			onLoadFinished: function (ctx, page) {
+				var p = ctx.params;
+				if (p.step == 0) {
+					page.evaluate(function (keyword) {
+						$('.query').val(keyword);
+						$('#public-num').click();
+						$('#searchForm').submit();
+					}, p.keyword);
+					p.step++;
+				} else if (p.step == 1) {
+					var off = page.evaluate(function () {
+						return $('.results .wx-rb').first().offset();
+					});
+					if (off == null)
+						return ctx.fulfill({empty: true});
+					page.sendEvent('click', off.left, off.top);
+					p.step++;
+				} else
+					ctx.reject();
+			},
+			onResourceRequested: function (ctx, req) {
+				if (req.url.startsWith('http://weixin.sogou.com/gzhjs'))
+					ctx.fulfill(req);
+			},
+		});
+	};
 
 	if (opts.keyword == null)
 		throw new Error('keyword must set');
 
-	var res = yield grab({
-		url: 'http://weixin.sogou.com/weixin?query='+encodeURI(opts.keyword),
-		params: {
-			keyword: opts.keyword,
-			step: 1,
-		},
-		returnCookies: opts.returnCookies,
-		onLoadFinished: function (ctx, page) {
-			var p = ctx.params;
-			if (p.step == 0) {
-				page.evaluate(function (keyword) {
-					$('.query').val(keyword);
-					$('#public-num').click();
-					$('#searchForm').submit();
-				}, p.keyword);
-				p.step++;
-			} else if (p.step == 1) {
-				var off = page.evaluate(function () {
-					return $('.results .wx-rb').first().offset();
-				});
-				if (off == null)
-					return ctx.fulfill({empty: true});
-				page.sendEvent('click', off.left, off.top);
-				p.step++;
-			} else
-				ctx.reject();
-		},
-		onResourceRequested: function (ctx, req) {
-			if (req.url.startsWith('http://weixin.sogou.com/gzhjs'))
-				ctx.fulfill(req);
-		},
-	});
+	var res = yield grabCbPhantomReq({keyword: opts.keyword});
+	var cbCodeReq = res.body;
+	var cookies = res.cookies;
+
+	var result;
+	console.log('cbCodeReq', cbCodeReq);
+	if (cbCodeReq.empty)
+		result = {totalItems: 0};
+	else {
+		var code = yield grabCbCode(cbCodeReq, cookies, opts.page);
+		result = yield execCbCodeGetResult(code);
+	}
 
 	if (opts.returnCookies)
-		return Object.assign({}, yield getxml(res.r), {cookies: res.cookies});
-	else
-		return yield getxml(res);
+		result.cookies = cookies;
+
+	return result;
 });
 
