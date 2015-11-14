@@ -187,7 +187,7 @@ module.exports.getNewCookie = co.wrap(function *() {
 //   page: 1,
 //   items: [
 //     { title, 
-//       content, 
+//       contentHtml, 
 //       date: '2015-11-3',
 //       lastModified: 144741211,
 //       url: '/websearch/art.jsp?sg=sn77VhdTZLpHadHTi_ho_8VQPpV6...',
@@ -250,7 +250,7 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 	var grabCbPhantomReq = function (opts) {
 		return grab({
 			url: 'http://weixin.sogou.com/weixin?query='+encodeURI(opts.keyword),
-			debug: true,
+			debug: false,
 			params: {
 				keyword: opts.keyword,
 				step: 1,

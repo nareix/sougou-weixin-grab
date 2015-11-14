@@ -47,15 +47,13 @@ errToString = function (msg, trace) {
 function initpage(page) {
 	page.settings.loadImages = false;
 	page.settings.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36';
-	if (ctx.cookies)
-		page.cookies = ctx.cookies;
 	if (ctx.headers)
 		page.customHeaders = ctx.headers;
 
 	page.onResourceRequested = function (req) {
 		log('Request', req.url);
 		if (ctx.onResourceRequested)
-			ctx.onResourceRequested(new Context(ctx, page), req);
+			ctx.onResourceRequested(ctx, req);
 	};
 
 	page.onResourceReceived = function(res) {
@@ -93,9 +91,9 @@ function initpage(page) {
 	page.onLoadFinished = function (status) {
 		log('finisned', status);
 		if (status != 'success')
-			new Context(ctx, page).reject();
+			ctx.reject();
 		else if (ctx.onLoadFinished)
-			ctx.onLoadFinished(new Context(ctx, page), page);
+			ctx.onLoadFinished(ctx, page);
 	};
 }
 
@@ -104,28 +102,26 @@ phantom.onError = function (msg, trace) {
 	phantom.exit(1);
 };
 
-var Context = function (ctx, page) {
-	this.params = ctx.params;
-	this.page = page;
-};
+ctx = JSONParse(readStdin());
 
-Context.prototype.exit = function (code, r) {
+if (ctx.cookies)
+	phantom.cookies = ctx.cookies;
+
+ctx.exit = function (code, r) {
 	system.stdout.write(JSON.stringify({
 		body: r,
-		cookies: this.page.cookies,
+		cookies: phantom.cookies,
 	}));
 	phantom.exit(code);
 };
 
-Context.prototype.fulfill = function (r) {
+ctx.fulfill = function (r) {
 	this.exit(0, r);
 };
 
-Context.prototype.reject = function (r) {
+ctx.reject = function (r) {
 	this.exit(1, r);
 };
-
-ctx = JSONParse(readStdin());
 
 initpage(page);
 page.open(ctx.url);
