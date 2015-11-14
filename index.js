@@ -156,6 +156,10 @@ module.exports.searchChan = co.wrap(function *(opts) {
 	}).get();
 });
 
+module.exports.getAllCookies = function (opts) {
+	return cookiepool.getAllEntries(opts);
+};
+
 module.exports.removeOldCookie = function (opts) {
 	return cookiepool.removeOldCookie(opts);
 };
