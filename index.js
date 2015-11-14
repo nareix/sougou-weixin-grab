@@ -15,8 +15,6 @@ var cheerio = require('cheerio');
 var toughCookie = require('tough-cookie');
 var CookiePool = require('./cookiepool');
 
-xml2js.parseString = denodeify(xml2js.parseString);
-
 var cookiepool = new CookiePool({
 	userCookieKey: 'SUID',
 	sessionCookieKey: 'SNUID',
@@ -32,6 +30,7 @@ var cookiepool = new CookiePool({
 //   },
 //   debug: true,
 //   useRequest: true,
+//   followRedirect: true,
 //   cookies: [in phantomjsCookieFormat],
 // }).then({body, cookies});
 var grab = co.wrap(function *(args) {
@@ -110,13 +109,17 @@ var grab = co.wrap(function *(args) {
 			store.putCookie(new toughCookie.Cookie(c), function (err) { });
 		});
 		var jar = requestRaw.jar(store);
-		var res = yield request({
+		var params = {
 			url: args.url,
 			jar: jar,
-		});
+		};
+		if (args.followRedirect !== undefined)
+			params.followRedirect = args.followRedirect;
+		var res = yield request(params);
 		return {
 			body: res.body,
 			cookies: toughCookiesToPhantomjsCookies(jar._jar.serializeSync().cookies),
+			headers: res.headers,
 		};
 	});
 
@@ -179,6 +182,7 @@ module.exports.getNewCookie = co.wrap(function *() {
 //   keyword: 'xxoo',
 //   page: 1,
 //   fetchContent: true,
+//   convertUrl: true,
 //   lastModifiedGt: 144741211,
 //   limit: 2,
 // }) => {
@@ -200,10 +204,11 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 	// code=`cb({items:['xmltext', 'xmltext', ...]})`
 	// return {items:[{}, {}, ...]}
 	var execCbCodeGetResult = function (code) {
+		var parseString = denodeify(xml2js.parseString);
 		return new Promise(function (fulfill, reject) {
 			sandbox = {cb: co.wrap(function *(r) {
 				r.items = yield r.items.map(function (xml) {
-					return xml2js.parseString(xml);
+					return parseString(xml);
 				});
 				r.items = r.items.map(function (r) {
 					r = r.DOCUMENT.item[0].display[0];
@@ -294,6 +299,16 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 			var pass = true;
 			items = items.filter(item => pass && (pass = (item.docid != opts.beforeDocId)));
 		}
+
+		if (opts.convertUrl)
+			yield Promise.all(items.map(item => grab({
+				url: 'http://weixin.sogou.com'+item.url,
+				useRequest: true,
+				cookies: cookies,
+				followRedirect: false,
+			}).then(res => {
+				item.url = res.headers.location;
+			})));
 
 		if (opts.fetchContent)
 			yield Promise.all(items.map(item => grab({
