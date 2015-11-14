@@ -186,7 +186,8 @@ module.exports.getNewCookie = co.wrap(function *() {
 //   totalPages: 10,
 //   page: 1,
 //   items: [
-//     { title, 
+//     { docid, 
+//       title, 
 //       contentHtml, 
 //       date: '2015-11-3',
 //       lastModified: 144741211,
@@ -288,6 +289,11 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 
 		if (opts.limit)
 			items = items.slice(0, opts.limit);
+
+		if (opts.beforeDocId) {
+			var pass = true;
+			items = items.filter(item => pass && (pass = (item.docid != opts.beforeDocId)));
+		}
 
 		if (opts.fetchContent)
 			yield Promise.all(items.map(item => grab({
