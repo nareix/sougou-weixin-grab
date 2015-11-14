@@ -7,15 +7,20 @@ var vm = require('vm');
 var xml2js = require('xml2js');
 var denodeify = require('denodeify');
 var requestRaw = require('request');
-require('request-debug')(requestRaw);
+process.env.SHOW_REQ && require('request-debug')(requestRaw);
 var request = denodeify(requestRaw);
 var path = require('path');
 var fs = require('fs');
 var cheerio = require('cheerio');
-var MemoryCookieStore = require('tough-cookie').MemoryCookieStore;
-fs.writeFile = denodeify(fs.writeFile);
-fs.readFile = denodeify(fs.readFile);
+var toughCookie = require('./node_modules/request/node_modules/tough-cookie');
+var CookiePool = require('./cookiepool');
+
 xml2js.parseString = denodeify(xml2js.parseString);
+
+var cookiepool = new CookiePool({
+	userCookieKey: 'SUID',
+	sessionCookieKey: 'SNUID',
+});
 
 // grab({
 //   url: xxoo,
@@ -42,6 +47,7 @@ var grab = co.wrap(function *(args) {
 	var toughCookiesToPhantomjsCookies = function (cookies) {
 		return cookies.map(function (c) {
 			var date = new Date(c.expires);
+			//console.log('toughCookiesToPhantomjsCookies', c, date);
 			return {
 				name: c.key,
 				value: c.value,
@@ -98,11 +104,10 @@ var grab = co.wrap(function *(args) {
 	});
 
 	var callRequest = co.wrap(function *() {
-		var store = new MemoryCookieStore();
+		var store = new toughCookie.MemoryCookieStore();
+		//console.log('phantomjsCookiesToToughCookies', args.cookies);
 		phantomjsCookiesToToughCookies(args.cookies).forEach(function (c) {
-			console.log('putCookie', c);
-			store.putCookie(c, function (err) {
-			});
+			store.putCookie(new toughCookie.Cookie(c), function (err) { });
 		});
 		var jar = requestRaw.jar(store);
 		var res = yield request({
@@ -115,32 +120,15 @@ var grab = co.wrap(function *(args) {
 		};
 	});
 
-	var cliCount = +process.env.GRAB_CLI_COUNT || 100;
+	if (args.noCookie)
+		args.cookies = [];
+	else if (args.cookies == null)
+		args.cookies = (yield cookiepool.getReqCookie()) || [];
 
-	var useFsCookie = args.cookies == null;
-	var cookieRoot = process.env.GRAB_COOKIE_ROOT || '/tmp/cookies';
-	var cookiePath = path.join(cookieRoot, Math.ceil(Math.random()*cliCount).toString());
-
-	if (useFsCookie) {
-		if (!fs.existsSync(cookieRoot))
-			fs.mkdirSync(cookieRoot);
-
-		if (fs.existsSync(cookiePath)) {
-			try {
-				args.cookies = args.cookies || JSON.parse(yield fs.readFile(cookiePath));
-			} catch (e) {
-			}
-		}
-		args.cookies = args.cookies || [];
-		console.log('useFsCookie', args.cookies);
-	} else {
-		console.log('notUsingFsCookie');
-	}
-
+	//console.log('getCookies', args.cookies);
 	var res = yield (args.useRequest ? callRequest() : callPhantom());
-
-	if (useFsCookie)
-		yield fs.writeFile(cookiePath, JSON.stringify(res.cookies));
+	//console.log('putCookies', res.cookies);
+	yield cookiepool.putResCookie(res.cookies);
 
 	return res;
 });
@@ -154,19 +142,12 @@ module.exports.grab = grab;
 //     title: 'ssbjme198' }
 // ]
 module.exports.searchChan = co.wrap(function *(opts) {
-
-	if (opts.keyword == null)
-		throw new Error('keyword must set');
-
-	var body = yield grab({
+	var res = yield grab({
 		useRequest: true,
-		url: 'http://weixin.sogou.com/weixin?query='+encodeURI(opts.keyword),
-		params: {
-			keyword: opts.keyword,
-		},
+		url: 'http://weixin.sogou.com/weixin?query='+encodeURI(opts.keyword || ''),
 	});
 
-	var $ = cheerio.load(body);
+	var $ = cheerio.load(res.body);
 	return $('.results .wx-rb').map(function (i, v) {
 		return {
 			logo: $(v).find('.img-box img').attr('src'),
@@ -175,9 +156,27 @@ module.exports.searchChan = co.wrap(function *(opts) {
 	}).get();
 });
 
+module.exports.removeOldCookie = function (opts) {
+	return cookiepool.removeOldCookie(opts);
+};
+
+module.exports.getNewCookie = co.wrap(function *() {
+	var res = yield grab({
+		url: 'http://weixin.sogou.com/weixin?query=',
+		onLoadFinished: function (ctx, req) {
+			ctx.fulfill();
+		},
+		noCookie: true,
+	});
+	return cookiepool.putResCookie(res.cookies);
+});
+
 // getChanArticles({
 //   keyword: 'xxoo',
 //   page: 1,
+//   fetchContent: true,
+//   lastModifiedGt: 144741211,
+//   limit: 2,
 // }) => {
 //   totalItems: 2147,
 //   totalPages: 10,
@@ -186,6 +185,7 @@ module.exports.searchChan = co.wrap(function *(opts) {
 //     { title, 
 //       content, 
 //       date: '2015-11-3',
+//       lastModified: 144741211,
 //       url: '/websearch/art.jsp?sg=sn77VhdTZLpHadHTi_ho_8VQPpV6...',
 //     },
 //   ],
@@ -219,7 +219,7 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 	// }
 	// page=1
 	// return `cb(...)`
-	var grabCbCode = co.wrap(function *(req, cookies, page) {
+	var grabCbCode = co.wrap(function *(req, page) {
 		var headers = {};
 		req.headers.forEach(function (h) {
 			headers[h.name] = h.value;
@@ -237,6 +237,7 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 			url: URL.format(u),
 			headers: headers,
 			cookies: cookies,
+			useRequest: true,
 		})).body;
 	});
 
@@ -277,21 +278,38 @@ module.exports.getChanArticles = co.wrap(function *(opts) {
 		});
 	};
 
-	if (opts.keyword == null)
-		throw new Error('keyword must set');
+	var filterItems = co.wrap(function *(items) {
+		if (opts.lastModifiedGt)
+			items = items.filter(item => item.lastModified > opts.lastModifiedGt);
 
-	var res = yield grabCbPhantomReq({keyword: opts.keyword});
+		if (opts.limit)
+			items = items.slice(0, opts.limit);
+
+		if (opts.fetchContent)
+			yield Promise.all(items.map(item => grab({
+				// item.url: '/websearch/art.jsp?sg=sn77VhdTZLpHadHTi_ho_8VQPpV6...',
+				url: 'http://weixin.sogou.com'+item.url,
+				useRequest: true,
+				cookies: cookies,
+			}).then((res) => {
+				item.contentHtml = res.body;
+			})));
+
+		return items;
+	});
+
+	var res = yield grabCbPhantomReq({keyword: opts.keyword || ''});
 	var cbCodeReq = res.body;
 	var cookies = res.cookies;
+	//console.log('cbCodeReq', cbCodeReq);
 
-	var result;
-	console.log('cbCodeReq', cbCodeReq);
-	if (cbCodeReq.empty)
-		result = {totalItems: 0};
-	else {
-		var code = yield grabCbCode(cbCodeReq, cookies, opts.page);
-		result = yield execCbCodeGetResult(code);
-	}
+	var result = cbCodeReq.empty ? {totalItems: 0, items: []} : yield co.wrap(function *() {
+		var code = yield grabCbCode(cbCodeReq, opts.page);
+		//console.log('code', code.substr(0, 6));
+		return execCbCodeGetResult(code);
+	})();
+
+	result.items = yield filterItems(result.items);
 
 	if (opts.returnCookies)
 		result.cookies = cookies;

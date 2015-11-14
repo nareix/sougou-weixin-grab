@@ -55,7 +55,7 @@ function initpage(page) {
 	page.onResourceRequested = function (req) {
 		log('Request', req.url);
 		if (ctx.onResourceRequested)
-			ctx.onResourceRequested(ctx, req);
+			ctx.onResourceRequested(new Context(ctx, page), req);
 	};
 
 	page.onResourceReceived = function(res) {
@@ -86,16 +86,16 @@ function initpage(page) {
 	};
 
 	page.onPageCreated = function (newpage) {
-		log('newpage', newpage.cookies);
+		//log('newpage', newpage.cookies);
 		initpage(newpage);
 	};
 
 	page.onLoadFinished = function (status) {
 		log('finisned', status);
 		if (status != 'success')
-			ctx.reject();
+			new Context(ctx, page).reject();
 		else if (ctx.onLoadFinished)
-			ctx.onLoadFinished(ctx, page);
+			ctx.onLoadFinished(new Context(ctx, page), page);
 	};
 }
 
@@ -104,22 +104,28 @@ phantom.onError = function (msg, trace) {
 	phantom.exit(1);
 };
 
-ctx = JSONParse(readStdin());
-ctx.exit = function (code, r) {
+var Context = function (ctx, page) {
+	this.params = ctx.params;
+	this.page = page;
+};
+
+Context.prototype.exit = function (code, r) {
 	system.stdout.write(JSON.stringify({
 		body: r,
-		cookies: page.cookies,
+		cookies: this.page.cookies,
 	}));
 	phantom.exit(code);
 };
 
-ctx.fulfill = function (r) {
-	ctx.exit(0, r);
+Context.prototype.fulfill = function (r) {
+	this.exit(0, r);
 };
 
-ctx.reject = function (r) {
-	ctx.exit(1, r);
+Context.prototype.reject = function (r) {
+	this.exit(1, r);
 };
+
+ctx = JSONParse(readStdin());
 
 initpage(page);
 page.open(ctx.url);
