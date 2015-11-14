@@ -12,7 +12,7 @@ var request = denodeify(requestRaw);
 var path = require('path');
 var fs = require('fs');
 var cheerio = require('cheerio');
-var toughCookie = require('./node_modules/request/node_modules/tough-cookie');
+var toughCookie = require('tough-cookie');
 var CookiePool = require('./cookiepool');
 
 xml2js.parseString = denodeify(xml2js.parseString);
